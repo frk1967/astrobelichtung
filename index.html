@@ -223,13 +223,19 @@ h2 { font-family: var(--f-display); font-size: .78rem; font-weight: 600; letter-
   <section id="viewSettings" class="listsec" hidden>
     <button class="back" id="btnSetBack">‹ Zurück</button>
     <div class="card">
-      <h2>Kamera · SVBONY SV605CC</h2>
-      <p class="hint">Sony IMX533 · 3008 × 3008 px · 3,76 µm · Farbe</p>
+      <h2>Kamera · Sensor</h2>
+      <div class="field"><label for="sSensor">Sony-Sensor</label><select id="sSensor"></select></div>
+      <div class="field" id="sVarWrap"><label for="sVar">Ausführung</label>
+        <select id="sVar"><option value="C">Farbe (OSC)</option><option value="M">Mono</option></select></div>
+      <p class="hint" id="sSensorInfo"></p>
       <div class="row2">
         <div class="field"><label for="sRN0">Ausleserauschen Gain 0 (e⁻)</label><input id="sRN0" inputmode="decimal"></div>
         <div class="field"><label for="sRN" id="sRNLabel">Ausleserauschen Gain 20 (e⁻)</label><input id="sRN" inputmode="decimal"></div>
       </div>
-      <div class="field"><label for="sQE">Quanteneffizienz (%)</label><input id="sQE" inputmode="decimal"></div>
+      <div class="row2">
+        <div class="field"><label for="sHcg" id="sHcgLabel">HCG ab Gain (Skala 0–600)</label><input id="sHcg" inputmode="numeric"></div>
+        <div class="field"><label for="sQE">Quanteneffizienz (%)</label><input id="sQE" inputmode="decimal"></div>
+      </div>
       <div class="field"><label for="sGS">Gain-Skala des Kameratreibers</label>
         <select id="sGS"><option value="100">0–100 (StellaVita / INDI)</option><option value="600">0–600 (Windows / ASCOM, z. B. NINA, SharpCap)</option></select></div>
       <p class="hint" id="sGSHint"></p>
@@ -395,17 +401,53 @@ const FILTERS = {
   n7:   { label: "Schmalband 7 nm", short: "Schmalband 7 nm", bw: 70 },
   n3:   { label: "Schmalband 3 nm", short: "Schmalband 3 nm", bw: 30 },
 };
-const PIXEL = 3.76, SENSOR_PX = 3008, REDUCER = 0.8;
+const REDUCER = 0.8;
+// Sony-IMX-Sensoren der gängigen Astrokameras. Richtwerte aus Hersteller-Datenblättern (überwiegend ZWO).
+// Gain-Werte auf der Skala 0–600 (0,1 dB je Schritt). hcg = Gain, ab dem der rauscharme HCG-Modus greift;
+// hasHcg = false: kein klarer HCG-Sprung, der Wert ist dann ein typischer rauscharmer Gain.
+// [id, Gruppe, Format, Breite px, Höhe px, Pixel µm, Varianten, RN bei Gain 0, RN rauscharm, hcg, hasHcg, Full Well ke, QE Farbe %, QE Mono %, Beispielkameras]
+const SENSORS = [
+  ["IMX411", "big",   "Mittelformat 54 × 40 mm", 14208, 10656, 3.76, "M",  3.5, 1.0, 100, true, 75,   0, 80, "QHY411M"],
+  ["IMX461", "big",   "Mittelformat 44 × 33 mm", 11656, 8750, 3.76, "CM",  3.5, 1.0, 100, true, 50.3, 80, 91, "ZWO ASI461MM, QHY461"],
+  ["IMX455", "big",   "Vollformat 36 × 24 mm", 9576, 6388, 3.76, "CM",    3.5, 1.2, 100, true, 51.4, 80, 91, "ZWO ASI6200, QHY600, Player One Zeus 455"],
+  ["IMX410", "big",   "Vollformat 36 × 24 mm", 6072, 4042, 5.94, "C",     6.4, 1.1, 140, true, 100,  80, 0,  "ZWO ASI2400MC, Player One Zeus 410"],
+  ["IMX571", "mid",   "APS-C 23,5 × 15,7 mm", 6248, 4176, 3.76, "CM",     3.3, 1.0, 100, true, 50,   80, 91, "ZWO ASI2600, QHY268, Player One Poseidon, ToupTek 2600"],
+  ["IMX294", "mid",   "4/3″ 19,1 × 13 mm", 4144, 2822, 4.63, "C",         7.3, 1.2, 120, true, 63.7, 75, 0,  "ZWO ASI294MC, QHY294C, SVBONY SV405CC"],
+  ["IMX492", "mid",   "4/3″ 19,1 × 13 mm", 8288, 5644, 2.315, "M",        7.5, 1.3, 120, true, 14,   0, 90, "ZWO ASI294MM, QHY294M"],
+  ["IMX533", "one",   "1″ 11,3 × 11,3 mm", 3008, 3008, 3.76, "CM",        3.3, 0.9, 120, true, 50,   80, 91, "SVBONY SV605CC/SV605MC, ZWO ASI533 (HCG ab 100)"],
+  ["IMX183", "one",   "1″ 13,2 × 8,8 mm", 5496, 3672, 2.4, "CM",          3.0, 1.6, 120, false, 15,  84, 84, "ZWO ASI183, QHY183"],
+  ["IMX428", "one",   "1,1″ 14,5 × 9,9 mm", 3216, 2208, 4.5, "M",         3.0, 1.4, 100, false, 41,  0, 72, "Atik ACIS 7.1, ToupTek ATR3CMOS07100KMA"],
+  ["IMX432", "one",   "1,1″ 14,5 × 9,9 mm", 1608, 1104, 9.0, "M",         20.8, 2.4, 300, false, 97, 0, 79, "ZWO ASI432MM"],
+  ["IMX585", "small", "1/1,2″ 11,1 × 6,3 mm", 3840, 2160, 2.9, "CM",      12, 0.7, 252, true, 40,    91, 91, "ZWO ASI585, Player One Uranus-C Pro, SVBONY SV705C"],
+  ["IMX174", "small", "1/1,2″ 11,3 × 7,1 mm", 1936, 1216, 5.86, "CM",     6.0, 3.5, 200, false, 32,  77, 77, "ZWO ASI174"],
+  ["IMX676", "small", "1/1,6″ 7,1 × 7,1 mm", 3552, 3552, 2.0, "CM",       2.7, 0.56, 180, true, 10.55, 83, 83, "ZWO ASI676"],
+  ["IMX678", "small", "1/1,8″ 7,7 × 4,3 mm", 3840, 2160, 2.0, "CM",       2.7, 0.6, 180, true, 11.3, 83, 83, "ZWO ASI678, Player One Uranus-C"],
+  ["IMX664", "small", "1/1,8″ 7,8 × 4,5 mm", 2704, 1536, 2.9, "C",        5.8, 0.46, 252, true, 36.5, 91, 0, "ZWO ASI664MC"],
+  ["IMX178", "small", "1/1,8″ 7,4 × 5,0 mm", 3096, 2080, 2.4, "CM",       2.2, 1.4, 100, false, 15,  81, 81, "ZWO ASI178"],
+  ["IMX290", "small", "1/2,8″ 5,6 × 3,2 mm", 1936, 1096, 2.9, "CM",       3.2, 1.0, 110, false, 14.6, 80, 80, "ZWO ASI290"],
+  ["IMX462", "small", "1/2,8″ 5,6 × 3,2 mm", 1936, 1096, 2.9, "CM",       2.9, 0.6, 80, true, 11.2,  80, 80, "ZWO ASI462, Player One Mars-C II"],
+  ["IMX662", "small", "1/2,8″ 5,6 × 3,1 mm", 1920, 1080, 2.9, "CM",       6.9, 0.8, 252, true, 38.2, 91, 91, "ZWO ASI662, Player One Apollo-M Mini, SVBONY SV305C"],
+  ["IMX715", "small", "1/2,8″ 5,6 × 3,1 mm", 3840, 2160, 1.45, "C",       2.9, 0.72, 200, false, 6,  80, 0,  "ZWO ASI715MC"],
+  ["IMX224", "small", "1/3″ 4,9 × 3,7 mm", 1304, 976, 3.75, "C",          3.4, 0.8, 60, true, 19,    80, 0,  "ZWO ASI224MC"],
+];
+const SENSOR_GROUPS = { big: "Vollformat und größer", mid: "APS-C und 4/3″", one: "1″-Klasse", small: "Kleine Sensoren (Planeten, Mond, Guiding)" };
+const sensorById = id => SENSORS.find(r => r[0] === id) || SENSORS.find(r => r[0] === "IMX533");
 
 function equipment(S) {
   const focal = S.focal * (S.reducer ? REDUCER : 1);
-  const scale = 206.265 * PIXEL / focal;
-  return { focal, aperture: S.aperture, fRatio: focal / S.aperture, scale, fov: scale * SENSOR_PX / 60, qe: S.qe / 100 };
+  const scale = 206.265 * S.px / focal;
+  const fovW = scale * S.sensorW / 60, fovH = scale * S.sensorH / 60;
+  return { focal, aperture: S.aperture, fRatio: focal / S.aperture, scale, fovW, fovH, fov: Math.min(fovW, fovH),
+           qe: S.qe / 100, color: S.color !== false };
 }
 // SV605CC im StellaVita (INDI-Treiber, Gain-Skala 0–100): HCG-Modus ab Gain 20 (= Gain 120 im ASCOM-Treiber, Skala 0–600).
 // Gain 0 = volle Dynamik, Gain 20 = niedriges Ausleserauschen.
-const HCG_BY_SCALE = { 100: 20, 600: 120 };   // gleicher HCG-Einsatzpunkt, nur andere Zahl
-const hcgGain = () => HCG_BY_SCALE[(typeof S !== "undefined" && S.gainScale) || 100] || 20;
+// HCG-Gain in der gewählten Skala. Annahme für 0–100: der Treiber bildet 0–600 linear ab (so beim SV605CC im StellaVita).
+const hcgGain = () => {
+  const native = (typeof S !== "undefined" && S.hcgNative) || 120;
+  return (typeof S !== "undefined" && S.gainScale === 600) ? native : Math.round(native / 6);
+};
+const hasHcg = () => (typeof S === "undefined") || S.hasHcg !== false;
 const BRIGHT = new Set(["M 42", "M 45", "M 44", "NGC 869", "M 13", "M 3", "M 5", "M 15", "M 2", "M 92", "M 11", "M 35", "M 57", "M 27", "M 1"]);
 function roundExp(t) {
   const step = t < 10 ? 1 : t < 60 ? 5 : t < 300 ? 15 : 30;
@@ -415,7 +457,7 @@ function roundExp(t) {
 function exposure(eq, filterKey, sqm, maxSub, rn) {
   const f = FILTERS[filterKey], narrow = f.bw < 500;
   const area = Math.PI * (eq.aperture / 20) ** 2;
-  const bayer = narrow ? 1 : 1 / 3;
+  const bayer = narrow || eq.color === false ? 1 : 1 / 3;   // Mono: jedes Pixel bekommt das volle Spektrum
   const rate = 1000 * Math.pow(10, -0.4 * sqm) * f.bw * bayer * area * eq.scale ** 2 * eq.qe * 0.90;
   const optimal = 10 * rn * rn / rate;
   const capped = optimal > maxSub;
@@ -430,8 +472,11 @@ function gainPlan(obj, eq, filterKey, sqm, maxSub, rnLow, rnHCG) {
     const low = exposure(eq, filterKey, sqm, maxSub, rnLow);
     if (!low.capped) return { gain: 0, exp: low, why: "Helles Objekt: Gain 0 gibt die volle Dynamik, Sterne und der helle Kern brennen weniger aus." };
   }
-  if (narrow) return { gain: hcgGain(), exp: hcg, why: "Schmalband liefert wenig Licht: Im HCG-Modus ist das Ausleserauschen am niedrigsten." };
-  return { gain: hcgGain(), exp: hcg, why: "HCG-Modus: niedriges Ausleserauschen bei noch guter Dynamik, für die meisten Objekte die beste Wahl." };
+  const mode = hasHcg() ? "Im HCG-Modus" : "Bei diesem Gain";
+  if (narrow) return { gain: hcgGain(), exp: hcg, why: `Schmalband liefert wenig Licht: ${mode} ist das Ausleserauschen am niedrigsten.` };
+  return { gain: hcgGain(), exp: hcg, why: hasHcg()
+    ? "HCG-Modus: niedriges Ausleserauschen bei noch guter Dynamik, für die meisten Objekte die beste Wahl."
+    : "Dieser Sensor hat keinen klaren HCG-Sprung. Der Gain ist ein typischer rauscharmer Wert mit noch guter Dynamik." };
 }
 
 const STEP = 300 * 1000;
@@ -525,7 +570,7 @@ function updatePlanet(x, date) {
 // ---------- Zustand ----------
 const BORTLE = { 1: [21.9, "exzellent dunkel"], 2: [21.6, "typisch dunkel"], 3: [21.4, "ländlich"], 4: [20.9, "ländlich / Vorort"],
   5: [20.1, "Vorort"], 6: [19.3, "heller Vorort"], 7: [18.8, "Vorort / Stadt"], 8: [18.3, "Stadt"], 9: [17.8, "Innenstadt"] };
-const DEF = { gainScale: 100, rnLow: 3.3, rnHCG: 0.9, qe: 80, aperture: 80, focal: 480, reducer: false, filterBroad: "none", filterLine: "dual",
+const DEF = { sensor: "IMX533", color: true, sensorW: 3008, sensorH: 3008, px: 3.76, hcgNative: 120, hasHcg: true, gainScale: 100, rnLow: 3.3, rnHCG: 0.9, qe: 80, aperture: 80, focal: 480, reducer: false, filterBroad: "none", filterLine: "dual",
   bortle: 4, sqm: null, filter: "all", minAlt: 25, maxSub: 600, lat: null, lon: null, place: "", night: false, recents: [] };
 const KEY = "astrobelichtung.v1";
 let S = (() => {
@@ -696,23 +741,28 @@ function skyStars() {
   }
   return (STARS = { ra, dec, mag, n });
 }
-// Passt eine Ellipse (a × b, PA) in ein quadratisches Feld bei Kamerawinkel th?
-function fitsAt(sh, fov, th) {
+// Halbe Ausdehnung einer Ellipse (a × b, PA) entlang der Bildachsen bei Kamerawinkel th (Bildoberkante nach PA th)
+function halfExtent(sh, th) {
   const r = (sh.pa - th) * RAD, a = sh.a / 2, b = sh.b / 2;
-  const hy = Math.hypot(a * Math.cos(r), b * Math.sin(r)), hx = Math.hypot(a * Math.sin(r), b * Math.cos(r));
-  return Math.max(hx, hy) <= fov / 2 * 0.95;
+  return { hy: Math.hypot(a * Math.cos(r), b * Math.sin(r)), hx: Math.hypot(a * Math.sin(r), b * Math.cos(r)) };
 }
-function framing(x, fov) {
+function fitsAt(sh, eq, th) {
+  const e = halfExtent(sh, th);
+  return e.hx <= eq.fovW / 2 * 0.95 && e.hy <= eq.fovH / 2 * 0.95;
+}
+function framing(x, eq) {
   const sh = mainShape(x), elong = sh.b < sh.a * 0.8;
-  if (fitsAt(sh, fov, elong ? sh.pa : 0)) {
-    return { fits: true, angle: elong ? Math.round(norm(sh.pa) % 180) : 0, diag: false, fill: sh.a / fov };
+  // Längsachse entlang der langen Bildseite legen
+  const natural = elong ? norm(sh.pa + (eq.fovW > eq.fovH ? 90 : 0)) % 180 : 0;
+  const fill = sh.a / Math.max(eq.fovW, eq.fovH);
+  if (fitsAt(sh, eq, natural)) return { fits: true, angle: Math.round(natural), diag: false, fill };
+  for (let d = 1; d <= 90; d++) {
+    for (const th of [natural + d, natural - d]) if (fitsAt(sh, eq, th)) return { fits: true, angle: Math.round(norm(th) % 180), diag: true, fill };
   }
-  for (let d = 1; d <= 45; d++) {
-    for (const th of [sh.pa + d, sh.pa - d]) if (fitsAt(sh, fov, th)) return { fits: true, angle: Math.round(norm(th) % 180), diag: true, fill: sh.a / fov };
-  }
-  const step = fov * 0.85;   // 15 % Überlappung
-  const rows = Math.ceil(sh.a * 1.05 / step), cols = Math.max(1, Math.ceil(sh.b * 1.05 / step));
-  return { fits: false, angle: elong ? Math.round(norm(sh.pa) % 180) : 0, rows, cols, step };
+  const e = halfExtent(sh, natural);
+  const stepW = eq.fovW * 0.85, stepH = eq.fovH * 0.85;   // 15 % Überlappung
+  const cols = Math.max(1, Math.ceil(2 * e.hx * 1.05 / stepW)), rows = Math.max(1, Math.ceil(2 * e.hy * 1.05 / stepH));
+  return { fits: false, angle: Math.round(natural), rows, cols, stepW, stepH };
 }
 function project(ra, dec, ra0, dec0) {
   const d = dec * RAD, d0 = dec0 * RAD, da = (ra - ra0) * RAD;
@@ -721,8 +771,8 @@ function project(ra, dec, ra0, dec0) {
 }
 function previewSVG(x, eq, eqAlt, fr) {
   const V = 360, c = V / 2, sh = mainShape(x);
-  let view = Math.max(eq.fov, eqAlt.fov) * 1.3, ext = sh.a * 1.25;
-  if (!fr.fits) ext = Math.max(ext, (fr.rows - 1) * fr.step + eq.fov, (fr.cols - 1) * fr.step + eq.fov) * 1.12;
+  let view = Math.max(eq.fovW, eq.fovH, eqAlt.fovW, eqAlt.fovH) * 1.3, ext = sh.a * 1.25;
+  if (!fr.fits) ext = Math.max(ext, Math.hypot((fr.cols - 1) * fr.stepW + eq.fovW, (fr.rows - 1) * fr.stepH + eq.fovH) * 1.05);
   view = Math.max(view, ext);
   const k = V / view, lim = view * 0.75 / 60;
   const P = (ra, dec) => { const p = project(ra, dec, x.ra, x.dec); return p.cc > 0 ? [c - p.xi * k, c - p.eta * k] : null; };
@@ -779,23 +829,23 @@ function previewSVG(x, eq, eqAlt, fr) {
   g += `<text x="${c}" y="${f1(ly)}" text-anchor="middle" class="lab main halo">${esc(x.name)}</text>`;
 
   // Bildfelder
-  const frame = (fov, cls, label) => {
-    const s = fov * k, h = s / 2;
-    return `<g transform="rotate(${-camAngle} ${c} ${c})"><rect x="${f1(c - h)}" y="${f1(c - h)}" width="${f1(s)}" height="${f1(s)}" class="fr ${cls}"/>` +
-      `<path d="M${f1(c - 6)} ${f1(c - h)} L${c} ${f1(c - h - 7)} L${f1(c + 6)} ${f1(c - h)}Z" class="up ${cls}"/>` +
-      `<text x="${f1(c - h + 4)}" y="${f1(c + h - 5)}" class="flab ${cls}">${label}</text></g>`;
+  const frame = (e, cls, label) => {
+    const w = e.fovW * k, h = e.fovH * k;
+    return `<g transform="rotate(${-camAngle} ${c} ${c})"><rect x="${f1(c - w / 2)}" y="${f1(c - h / 2)}" width="${f1(w)}" height="${f1(h)}" class="fr ${cls}"/>` +
+      `<path d="M${f1(c - 6)} ${f1(c - h / 2)} L${c} ${f1(c - h / 2 - 7)} L${f1(c + 6)} ${f1(c - h / 2)}Z" class="up ${cls}"/>` +
+      `<text x="${f1(c - w / 2 + 4)}" y="${f1(c + h / 2 - 5)}" class="flab ${cls}">${label}</text></g>`;
   };
   if (!fr.fits) {
     let m = `<g transform="rotate(${-camAngle} ${c} ${c})">`;
-    const s = eq.fov * k;
+    const w = eq.fovW * k, h = eq.fovH * k;
     for (let r = 0; r < fr.rows; r++) for (let q = 0; q < fr.cols; q++) {
-      const ox = (q - (fr.cols - 1) / 2) * fr.step * k, oy = (r - (fr.rows - 1) / 2) * fr.step * k;
-      m += `<rect x="${f1(c + ox - s / 2)}" y="${f1(c + oy - s / 2)}" width="${f1(s)}" height="${f1(s)}" class="fr mos"/>`;
+      const ox = (q - (fr.cols - 1) / 2) * fr.stepW * k, oy = (r - (fr.rows - 1) / 2) * fr.stepH * k;
+      m += `<rect x="${f1(c + ox - w / 2)}" y="${f1(c + oy - h / 2)}" width="${f1(w)}" height="${f1(h)}" class="fr mos"/>`;
     }
     g += m + `</g>`;
   }
-  g += frame(eqAlt.fov, "alt", `${Math.round(eqAlt.focal)} mm`);
-  g += frame(eq.fov, "cur", `${Math.round(eq.focal)} mm`);
+  g += frame(eqAlt, "alt", `${Math.round(eqAlt.focal)} mm`);
+  g += frame(eq, "cur", `${Math.round(eq.focal)} mm`);
 
   // Kompass und Maßstab
   g += `<g class="cmp"><path d="M${V - 22} 34 V14 M${V - 22} 34 H${V - 42}"/><text x="${V - 22}" y="10" text-anchor="middle">N</text><text x="${V - 48}" y="38" text-anchor="end">O</text></g>`;
@@ -808,9 +858,10 @@ function framingText(x, eq, eqAlt, fr) {
     const px = Math.max(1, Math.round(x.size * 60 / eq.scale));
     return `${x.name} ist im Bildfeld nur etwa ${px} Pixel groß. Die Sternkarte zeigt, wo er gerade zwischen den Sternen steht.`;
   }
-  const sh = mainShape(x), altFr = framing(x, eqAlt.fov);
+  const sh = mainShape(x), altFr = framing(x, eqAlt);
   const alt = S.reducer ? "ohne Reducer" : "mit Reducer";
-  const altTxt = altFr.fits ? `${alt} passt es in ein Bild` : `${alt} wären es ${altFr.rows} × ${altFr.cols} Felder`;
+  const mos = f => `${f.cols * f.rows} Feldern (${f.cols} nebeneinander, ${f.rows} übereinander)`;
+  const altTxt = altFr.fits ? `${alt} passt es in ein Bild` : `${alt} wären es ${mos(altFr).replace("Feldern", "Felder")}`;
   if (fr.fits) {
     const pct = Math.round(fr.fill * 100);
     const base = fr.diag
@@ -820,14 +871,14 @@ function framingText(x, eq, eqAlt, fr) {
     const rot = !fr.diag && sh.b < sh.a * 0.8 ? ` Am besten liegt es mit der Längsachse entlang der Bildkante (Kamerawinkel ${fr.angle}°).` : "";
     return base + rot + small;
   }
-  return `Zu groß für ein Bild: Mosaik aus ${fr.rows} × ${fr.cols} Feldern mit 15 % Überlappung (Kamerawinkel ${fr.angle}°). ${altTxt[0].toUpperCase() + altTxt.slice(1)}.`;
+  return `Zu groß für ein Bild: Mosaik aus ${mos(fr)} mit 15 % Überlappung (Kamerawinkel ${fr.angle}°). ${altTxt[0].toUpperCase() + altTxt.slice(1)}.`;
 }
 function previewCard(x, eq) {
-  const eqAlt = equipment({ ...S, reducer: !S.reducer }), fr = framing(x, eq.fov);
+  const eqAlt = equipment({ ...S, reducer: !S.reducer }), fr = framing(x, eq);
   return `<div class="card" id="pvCard">
       <h2>Bildfeld-Vorschau</h2>
       <div class="pv" id="pvSvg">${previewSVG(x, eq, eqAlt, fr)}</div>
-      <div class="legend"><span><i style="background:var(--accent)"></i>Dein Bildfeld ${Math.round(eq.fov)}′</span><span><i style="background:var(--muted)"></i>${S.reducer ? "ohne" : "mit"} Reducer ${Math.round(eqAlt.fov)}′</span>${fr.fits ? "" : `<span><i style="background:var(--accent);opacity:.5"></i>Mosaik</span>`}</div>
+      <div class="legend"><span><i style="background:var(--accent)"></i>Dein Bildfeld ${fovText(eq)}</span><span><i style="background:var(--muted)"></i>${S.reducer ? "ohne" : "mit"} Reducer ${fovText(eqAlt)}</span>${fr.fits ? "" : `<span><i style="background:var(--accent);opacity:.5"></i>Mosaik</span>`}</div>
       <div class="field"><label for="pvAngle">Kamerawinkel <span class="mono" id="pvAngleVal">${camAngle}°</span> <span class="hint">(Bildoberkante gegen Norden, über Osten)</span></label>
         <input id="pvAngle" type="range" min="0" max="179" step="1" value="${camAngle}"></div>
       <p class="why" id="pvText">${framingText(x, eq, eqAlt, fr)}</p>
@@ -840,7 +891,7 @@ function bindPreview(x, eq) {
     camAngle = +inp.value;
     $("pvAngleVal").textContent = camAngle + "°";
     const eqAlt = equipment({ ...S, reducer: !S.reducer });
-    $("pvSvg").innerHTML = previewSVG(x, eq, eqAlt, framing(x, eq.fov));
+    $("pvSvg").innerHTML = previewSVG(x, eq, eqAlt, framing(x, eq));
   };
 }
 
@@ -911,7 +962,7 @@ function renderDetail() {
         <div class="hero"><span class="lbl">Gain</span><span class="big gain">${gp.gain}</span></div>
       </div>
       <p class="why">${why}</p>
-      <p class="why"><b>Gain ${gp.gain}${gp.gain === 0 ? "" : " (HCG)"} · Skala 0–${S.gainScale}${gp.gain === 0 ? "" : `, entspricht ${S.gainScale === 600 ? "20 auf der Skala 0–100" : "120 auf der Skala 0–600"}`}:</b> ${gp.why}</p>
+      <p class="why"><b>Gain ${gp.gain}${gp.gain === 0 ? "" : hasHcg() ? " (HCG)" : " (rauscharm)"} · Skala 0–${S.gainScale}${gp.gain === 0 ? "" : `, entspricht ${S.gainScale === 600 ? `${Math.round(S.hcgNative / 6)} auf der Skala 0–100` : `${S.hcgNative} auf der Skala 0–600`}`}:</b> ${gp.why}</p>
       ${hdr}
       <dl class="kv">
         <dt>Beste Zeit</dt><dd>${tm(p.best.date)} Uhr · ${deg(p.best.objAlt)} hoch</dd>
@@ -931,8 +982,9 @@ function renderDetail() {
   const ph = p.phase, ref = p.best || p.now;
   const moonWarn = !x.planet && ref.moonAlt > 0 && ph.illum > 0.3 && f.bw >= 500
     ? `<p class="warn">Der Mond hellt den Himmel deutlich auf. Ein Dualbandfilter oder ein Zeitfenster ohne Mond bringt hier mehr.</p>` : "";
-  const fovTxt = x.planet || !x.size ? "" : x.size > eq.fov ? `<p class="warn">Größer als dein Bildfeld. Mosaik oder Ausschnitt nötig.</p>`
-    : x.size < eq.fov / 10 ? `<p class="hint">Sehr klein im Bild, später stark zuschneiden.</p>` : "";
+  const frX = framing(x, eq);
+  const fovTxt = x.planet || !x.size ? "" : !frX.fits ? `<p class="warn">Größer als dein Bildfeld. Mosaik oder Ausschnitt nötig.</p>`
+    : x.size < Math.max(eq.fovW, eq.fovH) / 10 ? `<p class="hint">Sehr klein im Bild, später stark zuschneiden.</p>` : "";
 
   v.innerHTML = head + res + previewCard(x, eq) + `
     <div class="card">
@@ -955,7 +1007,8 @@ function renderDetail() {
       <dl class="kv">
         ${p.culm ? `<dt>Höchster Stand</dt><dd>${tm(p.culm.date)} Uhr · ${deg(p.culm.objAlt)}</dd>` : ""}
         <dt>Größe</dt><dd>${sizeText(x)}</dd>
-        <dt>Bildfeld</dt><dd>${Math.round(eq.fov)}′ × ${Math.round(eq.fov)}′</dd>
+        <dt>Bildfeld</dt><dd>${fovText(eq)}</dd>
+        <dt>Sensor</dt><dd>${esc(S.sensor)} · ${S.color === false ? "Mono" : "Farbe"}</dd>
         <dt>Optik</dt><dd>${Math.round(eq.focal)} mm · f/${nf(eq.fRatio)} · ${nf(eq.scale, 2)} ″/px</dd>
       </dl>
       ${fovTxt}
@@ -976,19 +1029,35 @@ function fillSettings() {
   $("sSQM").value = S.sqm != null ? nf(S.sqm) : "";
   $("sMin").value = S.minAlt; $("sMax").value = String(S.maxSub);
   $("sGS").value = String(S.gainScale);
+  $("sSensor").innerHTML = Object.entries(SENSOR_GROUPS).map(([g, label]) =>
+    `<optgroup label="${label}">` + SENSORS.filter(r => r[1] === g).map(r =>
+      `<option value="${r[0]}"${r[0] === S.sensor ? " selected" : ""}>${r[0]} · ${r[2].split(" ")[0]} · ${nf(r[3] * r[4] / 1e6, 1)} MP · ${nf(r[5], 2)} µm</option>`).join("") + `</optgroup>`).join("");
+  const r = sensorById(S.sensor);
+  $("sVarWrap").hidden = r[6].length < 2;
+  $("sVar").value = S.color === false ? "M" : "C";
+  $("sSensorInfo").textContent = `${r[2]} · ${r[3]} × ${r[4]} px · ${nf(r[5], 2)} µm · Full Well ${nf(r[11], 1)} ke⁻ · ${r[10] ? "HCG-Modus" : "kein klarer HCG-Sprung"} · z. B. ${r[14]}. Richtwerte aus Datenblättern; Gain-Werte können je Hersteller abweichen.`;
+  $("sHcg").value = S.hcgNative;
   gainHint();
   optikHint();
 }
 function gainHint() {
-  const h = hcgGain();
+  const h = hcgGain(), n = S.hcgNative, mode = hasHcg() ? "der rauscharme HCG-Modus" : "der rauscharme Bereich";
   $("sRNLabel").textContent = `Ausleserauschen Gain ${h} (e⁻)`;
+  $("sHcgLabel").textContent = hasHcg() ? "HCG ab Gain (Skala 0–600)" : "Rauscharmer Gain (Skala 0–600)";
   $("sGSHint").textContent = S.gainScale === 600
-    ? "Skala 0–600: Der rauscharme HCG-Modus beginnt bei Gain 120. So zählen der Windows-Treiber (ASCOM) und Programme wie NINA oder SharpCap."
-    : "Skala 0–100: Der rauscharme HCG-Modus beginnt bei Gain 20. So zählt der StellaVita (INDI-Treiber); Gain 20 entspricht 120 im Windows-Treiber.";
+    ? `Skala 0–600: Bei diesem Sensor beginnt ${mode} bei Gain ${n}. So zählen die Windows-Treiber (ASCOM) und Programme wie NINA oder SharpCap.`
+    : `Skala 0–100: Gain ${h} entspricht Gain ${n} auf der Skala 0–600. So zählt der StellaVita (INDI-Treiber) beim SV605CC; ob dein Treiber genauso umrechnet, zeigt ein Blick auf seinen Gain-Bereich.`;
 }
+function applySensor(id, variant) {
+  const r = sensorById(id), v = r[6].includes(variant) ? variant : r[6][0];
+  Object.assign(S, { sensor: r[0], sensorW: r[3], sensorH: r[4], px: r[5], rnLow: r[7], rnHCG: r[8], hcgNative: r[9], hasHcg: r[10],
+                     color: v === "C", qe: v === "C" ? r[12] : r[13] });
+  save(); fillSettings();
+}
+function fovText(e) { return `${Math.round(e.fovW)}′ × ${Math.round(e.fovH)}′`; }
 function optikHint() {
   const e = equipment(S);
-  $("sOptik").textContent = `Ergibt ${Math.round(e.focal)} mm bei f/${nf(e.fRatio)}, ${nf(e.scale, 2)} ″/px und ein Bildfeld von ${Math.round(e.fov)}′ × ${Math.round(e.fov)}′.`;
+  $("sOptik").textContent = `Ergibt ${Math.round(e.focal)} mm bei f/${nf(e.fRatio)}, ${nf(e.scale, 2)} ″/px und ein Bildfeld von ${fovText(e)}.`;
 }
 function bindSettings() {
   const num = (id, key, min, max) => $(id).addEventListener("change", ev => {
@@ -1002,6 +1071,12 @@ function bindSettings() {
   $("sFLn").onchange = e => { S.filterLine = e.target.value; save(); };
   $("sBort").onchange = e => { S.bortle = +e.target.value; save(); };
   $("sMax").onchange = e => { S.maxSub = +e.target.value; save(); };
+  $("sSensor").onchange = e => applySensor(e.target.value, S.color === false ? "M" : "C");
+  $("sVar").onchange = e => applySensor(S.sensor, e.target.value);
+  $("sHcg").addEventListener("change", ev => {
+    const n = parseNum(ev.target.value);
+    if (n != null && n >= 0 && n <= 600) { S.hcgNative = Math.round(n); save(); gainHint(); } else { fillSettings(); }
+  });
   $("sGS").onchange = e => { S.gainScale = +e.target.value === 600 ? 600 : 100; save(); gainHint(); };
   $("sSQM").onchange = e => {
     const n = parseNum(e.target.value);
@@ -1024,7 +1099,7 @@ function openObject(id) {
   current = BYID.get(id);
   if (!current) return;
   if (current.planet) updatePlanet(current, new Date());
-  camAngle = framing(current, equipment(S).fov).angle;
+  camAngle = framing(current, equipment(S)).angle;
   S.recents = [id, ...S.recents.filter(r => r !== id)].slice(0, 5); save();
   show("detail");
 }
