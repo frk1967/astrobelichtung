@@ -1,5 +1,5 @@
 // AstroBelichtung – Offline-Speicher. Bei Internet wird immer die neueste Version geladen.
-const CACHE = "astrobelichtung-v4";
+const CACHE = "astrobelichtung-v5";
 const ASSETS = ["./", "./index.html", "./manifest.webmanifest", "./icon-180.png", "./icon-512.png"];
 
 self.addEventListener("install", (e) => {
@@ -14,6 +14,7 @@ self.addEventListener("activate", (e) => {
 
 self.addEventListener("fetch", (e) => {
   if (e.request.method !== "GET") return;
+  if (new URL(e.request.url).hostname.endsWith("open-meteo.com")) return;   // Wetter immer frisch aus dem Netz; offline hält die App selbst den letzten Stand
   e.respondWith(
     fetch(e.request)
       .then((res) => {

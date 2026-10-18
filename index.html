@@ -169,6 +169,15 @@ h2 { font-family: var(--f-display); font-size: .78rem; font-weight: 600; letter-
 .pv .cmp path { stroke: var(--muted); stroke-width: 1.2; fill: none; }
 .pv .cmp text { fill: var(--muted); font: 10px var(--f-data); }
 #pvAngle { width: 100%; accent-color: var(--accent); padding: 0; border: 0; background: none; }
+.wx { gap: 10px; }
+.wx-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.wx-verdict { font-family: var(--f-display); font-weight: 700; font-size: 1.25rem; }
+.wx-verdict.ok { color: var(--ok); } .wx-verdict.warn { color: var(--warn); } .wx-verdict.bad { color: var(--muted); }
+.wx-facts { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .9rem; color: var(--muted); }
+.wx-facts b { color: var(--fg); font-weight: 600; }
+.wx-bars svg { width: 100%; height: auto; display: block; }
+.wx-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: .8rem; color: var(--muted); flex-wrap: wrap; }
+.wx-foot button { background: none; border: 0; padding: 0; color: var(--accent); font-size: .85rem; text-decoration: underline; text-underline-offset: 3px; }
 .moonrow { display: flex; align-items: center; gap: 12px; }
 .moonrow svg { flex: none; }
 .moonrow b { display: block; }
@@ -204,6 +213,8 @@ h2 { font-family: var(--f-display); font-size: .78rem; font-weight: 600; letter-
       <button class="btn" id="btnLocCancel" hidden>Abbrechen</button>
     </div>
   </section>
+
+  <section id="wxCard" class="card wx" aria-live="polite"></section>
 
   <main id="viewList" class="listsec">
     <label for="q" class="sr">Objekt suchen</label>
@@ -631,6 +642,124 @@ function tryGPS(fromButton) {
   } catch (e) { fail(); }
 }
 
+// ---------- Astrowetter (Open-Meteo) ----------
+const WX_KEY = "astrobelichtung.wx";
+let WX = null, wxState = "idle";
+try { const c = JSON.parse(localStorage.getItem(WX_KEY) || "null"); if (c && c.hourly) WX = c; } catch (e) {}
+function sunAltAt(date) {
+  const jd = jdOf(date), e = ecl2eq(sunLon(jd), 0, jd);
+  return altitude(e.ra, e.dec, S.lat, S.lon, jd);
+}
+// Nächstes Nachtfenster (Sonne unter −12°), ab jetzt
+function nightWindow() {
+  const now = Date.now(), step = 600000;
+  let start = null, end = null;
+  for (let t = now; t < now + 30 * 3600000; t += step) {
+    const dark = sunAltAt(new Date(t)) < -12;
+    if (dark && start == null) start = t;
+    if (!dark && start != null) { end = t; break; }
+  }
+  return start == null ? null : { start, end: end ?? start + 8 * 3600000 };
+}
+async function fetchWx(force) {
+  if (!hasLoc()) { renderWx(); return; }
+  const fresh = WX && Date.now() - WX.t < 3600000 && Math.abs(WX.lat - S.lat) < 0.05 && Math.abs(WX.lon - S.lon) < 0.05;
+  if (fresh && !force) { wxState = "ok"; renderWx(); return; }
+  wxState = "loading"; renderWx();
+  const vars = "temperature_2m,dew_point_2m,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,precipitation_probability,wind_speed_10m,wind_gusts_10m,wind_speed_250hPa";
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${S.lat.toFixed(3)}&longitude=${S.lon.toFixed(3)}&hourly=${vars}&timeformat=unixtime&timezone=auto&forecast_days=3`;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    if (!j.hourly || !j.hourly.time) throw new Error("leer");
+    WX = { t: Date.now(), lat: S.lat, lon: S.lon, hourly: j.hourly };
+    try { localStorage.setItem(WX_KEY, JSON.stringify(WX)); } catch (e) {}
+    wxState = "ok";
+  } catch (e) { wxState = "error"; }
+  renderWx();
+  if (!$("viewDetail").hidden && current) renderDetail();
+}
+// Wetter zur Stunde eines Zeitpunkts
+function wxAt(date) {
+  if (!WX) return null;
+  const h = WX.hourly, t = date.getTime() / 1000;
+  let best = -1, bd = 1e12;
+  for (let i = 0; i < h.time.length; i++) { const d = Math.abs(h.time[i] - t); if (d < bd) { bd = d; best = i; } }
+  if (best < 0 || bd > 5400) return null;
+  return { cloud: h.cloud_cover[best], low: h.cloud_cover_low[best], mid: h.cloud_cover_mid[best], high: h.cloud_cover_high[best],
+           temp: h.temperature_2m[best], dew: h.dew_point_2m[best], rain: h.precipitation_probability?.[best],
+           wind: h.wind_speed_10m[best], gust: h.wind_gusts_10m[best], jet: h.wind_speed_250hPa?.[best] };
+}
+const seeingText = jet => jet == null ? "–" : jet < 70 ? "ruhig" : jet < 120 ? "mittel" : "unruhig";
+function renderWx() {
+  const el = $("wxCard");
+  if (!hasLoc() || $("viewList").hidden) { el.hidden = true; return; }
+  el.hidden = false;
+  const age = WX ? Math.round((Date.now() - WX.t) / 60000) : null;
+  const foot = (msg) => `<div class="wx-foot"><span>${msg}</span><button id="btnWx">Aktualisieren</button></div>`;
+  const nw = nightWindow();
+  let rows = [];
+  if (WX && nw) {
+    const h = WX.hourly;
+    for (let i = 0; i < h.time.length; i++) {
+      const t = h.time[i] * 1000;
+      if (t >= nw.start - 3600000 && t <= nw.end) rows.push({ t, ...wxAt(new Date(t)) });
+    }
+  }
+  if (!rows.length) {
+    let msg;
+    if (wxState === "loading") msg = "Wetter wird geladen …";
+    else if (wxState === "error") msg = location.hostname.endsWith("claude.ai") || location.hostname.includes("claudeusercontent")
+      ? "Das Wetter lässt sich im Claude-Fenster nicht laden. In deiner eigenen Web-App (GitHub) erscheint es automatisch."
+      : "Wetter konnte nicht geladen werden. Ist das Gerät online?";
+    else msg = "Noch keine Wetterdaten.";
+    el.innerHTML = `<h2>Astrowetter heute Nacht</h2><p class="hint">${msg}</p>` + foot("Wetterdaten: Open-Meteo.com");
+    $("btnWx").onclick = () => fetchWx(true);
+    return;
+  }
+  const avg = rows.reduce((a, r) => a + r.cloud, 0) / rows.length;
+  const rainMax = Math.max(...rows.map(r => r.rain ?? 0));
+  const spread = Math.min(...rows.map(r => r.temp - r.dew));
+  const tMin = Math.min(...rows.map(r => r.temp));
+  const gust = Math.max(...rows.map(r => r.gust));
+  const jets = rows.map(r => r.jet).filter(v => v != null);
+  const jet = jets.length ? jets.reduce((a, b) => a + b, 0) / jets.length : null;
+  // längstes klares Fenster (≤ 25 % Wolken)
+  let run = null, cur = null;
+  for (const r of rows) {
+    if (r.cloud <= 25) { cur = cur ? { ...cur, b: r.t } : { a: r.t, b: r.t }; if (!run || cur.b - cur.a > run.b - run.a) run = cur; }
+    else cur = null;
+  }
+  const verdict = avg <= 20 && rainMax < 30 ? ["Gute Astronacht", "ok"] : avg <= 55 && rainMax < 60 ? ["Wechselhaft", "warn"] : ["Eher bewölkt", "bad"];
+  const dew = spread < 2 ? "hoch – Heizband nutzen" : spread < 4 ? "mäßig" : "gering";
+  const clear = run ? `klar ${tm(new Date(run.a))}–${tm(new Date(run.b + 3600000))} Uhr` : "kein klares Fenster";
+  // Balken: Wolken je Stunde
+  const W = 360, H = 64, n = rows.length, bw = W / n;
+  let g = "";
+  rows.forEach((r, i) => {
+    const hgt = Math.max(2, r.cloud / 100 * (H - 16));
+    const col = r.cloud <= 25 ? "var(--ok)" : r.cloud <= 60 ? "var(--warn)" : "var(--muted)";
+    g += `<rect x="${(i * bw + 1).toFixed(1)}" y="${(H - 14 - hgt).toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${hgt.toFixed(1)}" rx="2" style="fill:${col}"/>`;
+    const hr = new Date(r.t).getHours();
+    if (hr % 2 === 0) g += `<text x="${(i * bw + bw / 2).toFixed(1)}" y="${H - 2}" text-anchor="middle" font-size="10" style="fill:var(--muted);font-family:var(--f-data)">${String(hr).padStart(2, "0")}</text>`;
+  });
+  el.innerHTML = `
+    <div class="wx-head"><h2>Astrowetter heute Nacht</h2><span class="wx-verdict ${verdict[1]}">${verdict[0]}</span></div>
+    <div class="wx-facts">
+      <span>Wolken Ø <b>${Math.round(avg)} %</b></span>
+      <span><b>${clear}</b></span>
+      <span>Seeing-Tendenz <b>${seeingText(jet)}</b></span>
+      <span>Taugefahr <b>${dew}</b></span>
+      <span>Tiefstwert <b>${nf(tMin, 0)} °C</b></span>
+      <span>Böen bis <b>${Math.round(gust)} km/h</b></span>
+      ${rainMax >= 20 ? `<span>Regenrisiko <b>${Math.round(rainMax)} %</b></span>` : ""}
+    </div>
+    <div class="wx-bars"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Bewölkung je Stunde in der Nacht">${g}</svg></div>
+    ${foot(`Wolken je Stunde (niedrig = klar) · Open-Meteo.com · ${age == null ? "" : age < 2 ? "gerade aktualisiert" : `vor ${age} min`}${wxState === "error" ? " · offline, letzter Stand" : ""}`)}`;
+  $("btnWx").onclick = () => fetchWx(true);
+}
+
 // ---------- Liste ----------
 const MAX_ROWS = 150;
 function rowHTML(x) {
@@ -912,6 +1041,7 @@ function planetCard(x, p, eq) {
       <p class="why"><b>Gain:</b> mindestens ${hcgGain()} (HCG, Skala 0–${S.gainScale}), gern höher, bis das Histogramm bei dieser Belichtung etwa 50–70 % erreicht.</p>
       <dl class="kv">
         <dt>Beste Zeit</dt><dd>${tm(best.date)} Uhr · ${deg(best.objAlt)} hoch</dd>
+        ${wxLine(best.date)}
         <dt>Über 10° heute</dt><dd>${nf(vis.length * 5 / 60)} h</dd>
         <dt>Scheinbarer Durchmesser</dt><dd>${nf(diam, 1)}″</dd>
         <dt>Größe auf dem Sensor</dt><dd>${Math.max(1, Math.round(px))} px</dd>
@@ -920,6 +1050,10 @@ function planetCard(x, p, eq) {
       ${px < 80 ? `<p class="hint">Bei ${Math.round(eq.focal)} mm ist ${esc(x.name)} nur etwa ${Math.max(1, Math.round(px))} Pixel groß. Für Details lohnt eine 2×- bis 3×-Barlowlinse. Nimm dann nur einen kleinen Bildausschnitt (ROI) auf, das erhöht die Bildrate.</p>` : ""}
       ${x.planet === "jupiter" ? `<p class="hint">Jupiter dreht sich schnell: ein einzelnes Video höchstens 2–3 Minuten lang.</p>` : ""}
     </div>`;
+}
+function wxLine(date) {
+  const w = wxAt(date);
+  return w ? `<dt>Wetter dann</dt><dd>${Math.round(w.cloud)} % Wolken · Seeing ${seeingText(w.jet)}</dd>` : "";
 }
 function sizeText(x) {
   if (x.planet) return `${nf(x.size * 60, 1)}″`;
@@ -966,6 +1100,7 @@ function renderDetail() {
       ${hdr}
       <dl class="kv">
         <dt>Beste Zeit</dt><dd>${tm(p.best.date)} Uhr · ${deg(p.best.objAlt)} hoch</dd>
+        ${wxLine(p.best.date)}
         <dt>Nutzbar über ${deg(S.minAlt)}</dt><dd>${nf(p.usableHours)} h</dd>
         <dt>Bilder in dieser Zeit</dt><dd>${Math.floor(p.usableHours * 3600 / e.seconds)}</dd>
         <dt>Filter</dt><dd>${f.short}</dd>
@@ -1089,6 +1224,7 @@ function show(view) {
   $("viewList").hidden = view !== "list";
   $("viewDetail").hidden = view !== "detail";
   $("viewSettings").hidden = view !== "settings";
+  if (view !== "list") $("wxCard").hidden = true; else renderWx();
   clearInterval(timer);
   if (view === "detail") { renderDetail(); timer = setInterval(renderDetail, 60000); }
   if (view === "list") renderList();
@@ -1105,6 +1241,7 @@ function openObject(id) {
 }
 function renderAll() {
   renderHead();
+  fetchWx(false);
   if (!$("viewDetail").hidden && current) renderDetail(); else if (!$("viewList").hidden) renderList();
 }
 
@@ -1135,6 +1272,8 @@ renderHead();
 renderList();
 if (!hasLoc()) showLocSetup(true);
 tryGPS(false);
+fetchWx(false);
+setInterval(() => fetchWx(false), 30 * 60000);
 </script>
 
 <script>
